@@ -77,14 +77,68 @@ def _patch_omml(omml):
     return omml
 
 
+# ==========================================
+# НАСТРОЙКИ ПРЕПРОЦЕССИНГА
+# ==========================================
+
+# Список операторов, которые нельзя оставлять "голыми" в начале выражения
+OPERATORS = ['<', '>', '=', '+', '-', '*', '~', '<=', '>=', '~=', '\\le', '\\ge', '\\approx', '\\neq']
+
+# Невидимый символ нулевой ширины (Zero-Width Space) в текстовом блоке.
+# Он нужен, чтобы LibreOffice видел левый/правый операнд там, где его нет.
+INVISIBLE_OPERAND = '\\text{\u200b}'
+
+
+def _fix_leading_operators(latex_str: str) -> str:
+    """Добавляет невидимый операнд в начало формулы или степени, если там стоит оператор."""
+    # Сортируем по длине, чтобы <= срабатывало раньше <
+    ops_sorted = sorted(OPERATORS, key=len, reverse=True)
+    ops_regex = "|".join(re.escape(op) for op in ops_sorted)
+    
+    # 1. В начале всей формулы: <10 -> \text{\u200b} <10
+    latex_stripped = latex_str.lstrip()
+    if re.match(r'^(' + ops_regex + r')', latex_stripped):
+        latex_str = INVISIBLE_OPERAND + ' ' + latex_stripped
+        
+    # 2. В начале степени: x^<10 -> x^{\text{\u200b}<10}
+    # Сначала оборачиваем в скобки, если их нет: x^< -> x^{<}
+    pattern_unwrapped = r'(\^)\s*(' + ops_regex + r')'
+    latex_str = re.sub(pattern_unwrapped, r'\1{\2}', latex_str)
+    
+    # Затем добавляем невидимый операнд внутри скобок: x^{<10} -> x^{\text{\u200b}<10}
+    pattern_wrapped = r'(\^)\{\s*(' + ops_regex + r')'
+    latex_str = re.sub(pattern_wrapped, r'\1{' + INVISIBLE_OPERAND + r'\2', latex_str)
+    
+    return latex_str
+
+
+def _fix_trailing_operators(latex_str: str) -> str:
+    """Добавляет невидимый операнд в конец формулы, если там стоит оператор."""
+    latex_stripped = latex_str.rstrip()
+    
+    # 1. Если формула заканчивается на оператор
+    if latex_stripped.endswith(('+', '-', '=')):
+        latex_str = latex_stripped + ' ' + INVISIBLE_OPERAND
+        
+    # 2. Если формула заканчивается на \quad (перенос строки)
+    elif latex_stripped.endswith(r'\quad'):
+        base = latex_stripped[:-5].rstrip()
+        # Проверяем, есть ли оператор перед \quad
+        if base.endswith(('+', '-', '=')):
+            latex_str = base + ' ' + INVISIBLE_OPERAND + ' ' + r'\quad'
+            
+    return latex_str
+
+
 def _preprocess_latex(latex_str: str) -> str:
-    # === ФИКС ДЛЯ LIBREOFFICE: Убираем команды выравнивания ===
+    """Главная функция, которая применяет все фиксы к строке LaTeX."""
+    # 1. Фиксы выравнивания (LibreOffice не понимает aligned/array)
     latex_str = latex_str.replace(r'\begin{aligned}', '').replace(r'\end{aligned}', '')
     latex_str = latex_str.replace(r'\begin{array}{l}', '').replace(r'\end{array}', '')
     latex_str = latex_str.replace('&', '') 
     latex_str = latex_str.replace(r'\\', r'\quad') 
     
-    # === КОНВЕРТАЦИЯ ЮНИКОД-СТЕПЕНЕЙ ===
+    # 2. Юникод-степени (⁻¹⁰ -> ^{-10})
     superscripts = {
         '⁰': '0', '¹': '1', '²': '2', '³': '3', '⁴': '4',
         '⁵': '5', '⁶': '6', '⁷': '7', '⁸': '8', '⁹': '9',
@@ -96,27 +150,18 @@ def _preprocess_latex(latex_str: str) -> str:
         return f'^{{{converted}}}'
     latex_str = re.sub(r'([⁰¹²³⁴⁵⁶⁷⁸⁹⁻⁺]+)', replace_unicode_sup, latex_str)
     
-    # === ОБОРАЧИВАНИЕ СТЕПЕНЕЙ ===
+    # 3. Оборачивание многозначных чисел в степени (256^2 -> {256}^{2})
     latex_str = re.sub(r'(?<![\w\{])(\d+)\^(\{[^\}]+\}|[^\s^])', r'{\1}^{\2}', latex_str)
     
-    # === ФИКС ДЛЯ LIBREOFFICE: НЕВИДИМЫЙ ОПЕРАНД ПОСЛЕ ПЛЮСА ===
-    latex_stripped = latex_str.rstrip()
+    # 4. Звездочка в степени (^* -> ^{\text{*}})
+    latex_str = re.sub(r'\^\s*\{\s*\*\s*\}', r'^{\\text{*}}', latex_str)
+    latex_str = re.sub(r'\^\s*\*', r'^{\\text{*}}', latex_str)
     
-    # Невидимый символ нулевой ширины (Zero-Width Space) в текстовом блоке.
-    # LibreOffice видит его как пустую строку "", а Word игнорирует.
-    invisible_operand = '\\text{\u200b}'
-    
-    if latex_stripped.endswith(('+', '-', '=')):
-        latex_str = latex_stripped + ' ' + invisible_operand
-        
-    elif latex_stripped.endswith(r'\quad'):
-        # Если в конце \quad, ищем, нет ли перед ним плюса (для разбитых формул)
-        base = latex_stripped[:-5].rstrip()
-        if base.endswith(('+', '-', '=')):
-            latex_str = base + ' ' + invisible_operand + ' ' + r'\quad'
+    # 5. Фиксы операторов (вызов вспомогательных функций)
+    latex_str = _fix_leading_operators(latex_str)
+    latex_str = _fix_trailing_operators(latex_str)
             
     return latex_str
-            
 
 
 def latex_to_omml_via_pandoc(latex_str):

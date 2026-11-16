@@ -27,7 +27,7 @@
     sudo apt install python3 python3-pip python3-venv
     ```
 
-### 1.2. Установка Pandoc (Критически важно!)
+### 1.2. Установка Pandoc (важно!)
 Pandoc — это внешняя программа, которая переводит формулы из LaTeX в формат Word. Без неё формулы не будут работать.
 *   **Linux (Ubuntu/Debian):**
     ```bash

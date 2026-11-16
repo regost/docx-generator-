@@ -39,7 +39,37 @@ def split_md_row(row: str):
     row = row.strip()
     if row.startswith("|"): row = row[1:]
     if row.endswith("|"): row = row[:-1]
-    return [cell.strip() for cell in row.split("|")]
+    
+    cells = []
+    current_cell = []
+    in_math = False
+    
+    i = 0
+    while i < len(row):
+        char = row[i]
+        
+        # Отслеживаем вход/выход из математики ($...$)
+        if char == '$' and (i == 0 or row[i-1] != '\\'):
+            in_math = not in_math
+            current_cell.append(char)
+            
+        # Если встретили \| (экранированный пайп), не разрываем строку
+        elif char == '\\' and i + 1 < len(row) and row[i+1] == '|':
+            current_cell.append('\\|')
+            i += 1
+            
+        # Если встретили |, но мы НЕ внутри формулы — это разделитель колонок
+        elif char == '|' and not in_math:
+            cells.append("".join(current_cell).strip())
+            current_cell = []
+            
+        else:
+            current_cell.append(char)
+            
+        i += 1
+        
+    cells.append("".join(current_cell).strip())
+    return cells
 
 
 def parse_alignments(sep_row: str):
